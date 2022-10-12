@@ -1,0 +1,20 @@
+node_modules/
+package-lock.json
+
+#build
+app/build/
+
+# Enviroment
+.env
+
+# Hardhat
+artifacts
+cache
+
+# OpenZeppelin
+.openzeppelin/dev-*.json
+.openzeppelin/.session
+.openzeppelin/unknown-*.json
+
+# Idea
+.idea
