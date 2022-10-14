@@ -1,359 +1,301 @@
 // SPDX-License-Identifier: MIT
-pragma solidity >=0.7.6;
+pragma solidity >=0.8.0;
 pragma abicoder v2;
 
-import "@openzeppelin/contracts-upgradeable/proxy/Initializable.sol";
+import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import "@openzeppelin/contracts-upgradeable/utils/ContextUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/token/ERC20/ERC20Upgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/security/ReentrancyGuardUpgradeable.sol";
 import "hardhat/console.sol";
 
 /**
  * @title BlockToWin Platform
- * @author Rafael Romero (@rafius97)
- * @author Guillermo Campanudo (@capitanwesler)
- * @author Victor Hernández (@NanexZ)
+ * @author Crisol Cova
  * @notice BlockToWin allows you to submit documents that can be verified
  * in IPFS
  */
-contract BlockToWin is Initializable, ContextUpgradeable {
-    /**
-     * @dev Returns true if an account is an admin
-     */
-    mapping(address => bool) internal _isAdmin;
+contract BlockToWin is
+  Initializable,
+  ContextUpgradeable,
+  AccessControlUpgradeable,
+  ERC20Upgradeable,
+  ReentrancyGuardUpgradeable
+{
+  ///@notice the current id to reference the lottery
+  uint256 public currentDataLotteryId;
+  /**
+   * @notice Retrieves the amount of documents submitted.
+   * @return The counter of the documents.
+   */
+  uint256 public documentsCount;
+  ///@notice a struct to storage every lottery
+  struct DataLottery {
+    uint256 dataLotteryId;
+    uint256[] winners;
+    uint256[] alternates;
+    string ipfsDataBack;
+    uint256 idDocument;
+  }
 
-    /**
-     * @dev Returns true if an account is an super admin
-     */
-    mapping(address => bool) internal _isSuperAdmin;
+  ///@notice document
+  struct Document {
+    address owner;
+    string name;
+    string promo;
+    uint256 validityStart;
+    uint256 validityEnd;
+    string hash;
+    uint256 uploadedAt;
+    string explorerLink;
+    string ipfsLink;
+    bool isVisible;
+  }
 
-    /**
-     * @dev Mapping from address to a Approval.
-     * @return True if an account is approval.
-     */
-    struct Approval {
-        string name;
-        TypeOfOwner typeOfOwner;
-        address user;
-        bool approved;
+  mapping(uint256 => Document) public documents;
+  mapping(uint256 => Document) public canceledDocuments;
+  ///@notice mapping ids of lottery to struct to storage all the lotteries
+  mapping(uint256 => DataLottery) public dataLotteryRecord;
+  DataLottery[] public allData;
+
+  /**
+   *  @notice This is the enum for the types of owner that it can be own a document.
+   */
+  enum TypeOfOwner {
+    COMPANY,
+    USER
+  }
+
+  event NewSort(
+    uint256 _players,
+    uint256[] _winners,
+    uint256[] _alternates,
+    string _ipfsHash,
+    uint256
+  );
+  /**
+   * @dev Emitted when `approval' submits a document.
+   */
+  event DocumentSubmitted(
+    address indexed approval,
+    string name,
+    string promo,
+    string hash,
+    uint256 uploadedAt,
+    string ext
+  );
+  event CanceledDocument(uint256 index);
+
+  modifier onlyOwner() {
+    require(hasRole(DEFAULT_ADMIN_ROLE, msg.sender), "Not owner");
+    _;
+  }
+
+  function initialize(address[] memory admins) external initializer {
+    _setupRole(DEFAULT_ADMIN_ROLE, msg.sender);
+    for (uint256 i; i < admins.length; i++) {
+      _setupRole(DEFAULT_ADMIN_ROLE, admins[i]);
     }
+    __Context_init();
+  }
 
-    mapping(uint256 => Approval) public approvals;
-
-    /**
-     * @dev Mapping from address to a bool.
-     * @return True if an account is approval.
-     */
-    mapping(address => bool) public isApprovals;
-
-    /**
-     * @notice Retrieves a document given an index.
-     * @return The document submitted by an approval account.
-     */
-
-    struct Document {
-        address owner;
-        string name;
-        string promo;
-        uint256 validityStart;
-        uint256 validityEnd;
-        string hash;
-        uint256 uploadedAt;
-        string explorerLink;
-        string ipfsLink;
-        bool isVisible;
-    }
-
-    mapping(uint256 => Document) public documents;
-    mapping(uint256 => Document) public canceledDocuments;
-
-
-    /**
-     * @notice Retrieves the amount of documents submitted.
-     * @return The counter of the documents.
-     */
-    uint256 public documentsCount;
-
-    /**
-     *  @notice Retrieves the amount of users.
-     *  @return The counter of the users.
-     */
-    uint256 public approvalsCount;
-
-    /**
-     *  @notice This is the enum for the types of owner that it can be own a document.
-     */
-    enum TypeOfOwner {COMPANY, USER}
-
-    modifier onlyAdmin {
-        require(_isAdmin[_msgSender()], "BlockToWin: NOT_ADMIN");
-        _;
-    }
-
-    modifier onlySuperAdmin {
-        require(_isSuperAdmin[_msgSender()], "BlockToWin: NOT_SUPER_ADMIN");
-        _;
-    }
-
-    modifier onlyApproval {
-        require(isApprovals[_msgSender()], "BlockToWin: NOT_APPROVAL");
-        _;
-    }
-
-    modifier notPending(address sender) {
-        require(!isPending(sender), "BlockToWin: PENDING_EXISTS");
-        _;
-    }
-
-    modifier notApproved(address approval) {
-        require(!isApprovals[approval], "BlockToWin: APPROVAL_EXISTS");
-        _;
-    }
-
-    /**
-     * @dev Emitted when `superAdmin` adds a new admin.
-     */
-    event AdminAdded(address indexed superAdmin, address indexed newAdmin);
-
-    /**
-     * @dev Emitted when `superAdmin` revokes an admin.
-     */
-    event AdminRevoked(
-        address indexed superAdmin,
-        address indexed revokedAdmin
+  /// PUBLIC FUNCTIONS
+  /**
+   * @notice Allows to an approval submits a document.
+   * @param name Name of the company/user.
+   * @param promo Description of the promo.
+   * @param validityStart Timestamp for the validity start, in unix
+   * @param validityEnd Timestampt for the validity end, in unix
+   * @param hash Hash generated by the IPFS
+   * @param uploadedAt Timestamp for the generated document
+   * @param explorerLink Link of the document hash in the explorer
+   * @param ipfsLink Link of the document hash in the IPFS
+   * @param ext Extension of the document (ex: .pdf .doc .txt)
+   *
+   * Emits a {DocumentSubmitted} event.
+   */
+  function submitDocument(
+    string memory name,
+    string memory promo,
+    uint256 validityStart,
+    uint256 validityEnd,
+    string memory hash,
+    uint256 uploadedAt,
+    string memory explorerLink,
+    string memory ipfsLink,
+    string memory ext,
+    bool isVisible
+  ) public {
+    require(!verifyDocument(hash), "BlockToWin: HASH_EXISTS");
+    require(
+      ERC20Upgradeable(this).balanceOf(msg.sender) > 0,
+      "You cannot submit documents"
     );
+    documents[documentsCount] = Document({
+      owner: _msgSender(),
+      name: name,
+      promo: promo,
+      validityStart: validityStart,
+      validityEnd: validityEnd,
+      hash: hash,
+      uploadedAt: uploadedAt,
+      explorerLink: explorerLink,
+      ipfsLink: ipfsLink,
+      isVisible: isVisible
+    });
+    documentsCount += 1;
+    ERC20Upgradeable(this)._burn(msg.sender, 10**18);
+    emit DocumentSubmitted(_msgSender(), name, promo, hash, uploadedAt, ext);
+  }
 
-    /**
-     * @dev Emitted when `approval` is registered in order to be approved or rejected.
-     */
-    event Registered(address indexed approval, TypeOfOwner indexed typeOfOwner);
-
-    /**
-     * @dev Emitted when `admin` approves `approval`.
-     */
-    event Approved(address indexed admin, address indexed approval);
-
-    /**
-     * @dev Emitted when `admin` rejects `approval`.
-     */
-    event Rejected(address indexed admin, address indexed approval);
-
-    /**
-     * @dev Emitted when `approval` submits a document.
-     */
-    event DocumentSubmitted(
-        address indexed approval,
-        string name,
-        string promo,
-        string hash,
-        uint256 uploadedAt,
-        string ext
-    );
-    event CanceledDocument(uint256 index);
-    event RevokeApproval(address admin, address approval);
-
-    function initialize(address[] memory admins) external initializer {
-        for (uint256 i; i < admins.length; i++) {
-            _isAdmin[admins[i]] = true;
-            _isSuperAdmin[admins[i]] = true;
-        }
-        __Context_init();
+  function chooseTheWinners(
+    uint256 _totalPlayers,
+    uint256 _numberOfWinners,
+    string memory _ipfsDataBack
+  ) private {
+    uint256 j = 0;
+    uint256 k = _totalPlayers;
+    while (j < _numberOfWinners) {
+      uint256 randomNumber = (uint256(
+        keccak256(
+          abi.encodePacked(block.timestamp, msg.sender, _ipfsDataBack, j, k)
+        )
+      ) % _totalPlayers) + 1;
+      if (
+        !isRepeated(
+          randomNumber,
+          dataLotteryRecord[currentDataLotteryId].winners
+        )
+      ) {
+        dataLotteryRecord[currentDataLotteryId].winners.push(randomNumber);
+        j++;
+      } else {
+        k++;
+      }
     }
+  }
 
-    /**
-     * @notice Adds a new admin to operate the contract
-     * @param newAdmin The address of the new admin to be added
-     *
-     * Emits a {AdminAdded} event.
-     */
-    function addAdmin(address newAdmin) external onlySuperAdmin {
-        require(!_isAdmin[newAdmin], "BlockToWin: ADMIN_EXISTS");
-        _isAdmin[newAdmin] = true;
-        emit AdminAdded(_msgSender(), newAdmin);
-    }
-
-    /**
-     * @notice Adds a new admin to operate the contract
-     * @param revokedAdmin The address of the admin to be revoked
-     *
-     * Emits a {AdminRevoked} event.
-     */
-    function revokeAdmin(address revokedAdmin) external onlySuperAdmin {
-        require(!_isSuperAdmin[revokedAdmin], "BlockToWin: SUPER_ADMIN_ERROR");
-        _isAdmin[revokedAdmin] = false;
-        emit AdminRevoked(_msgSender(), revokedAdmin);
-    }
- 
-    /**
-     * @notice Registers an account in order to be approved or rejected by an admin.
-     *
-     * Emits a {Registered} event.
-     */
-    function register(TypeOfOwner typeOfOwner, string memory name)
-        public
-        notPending(_msgSender())
-        notApproved(_msgSender())
-    {
-        approvals[approvalsCount].user = _msgSender();
-        approvals[approvalsCount].typeOfOwner = typeOfOwner;
-        approvals[approvalsCount].name = name;
-        approvalsCount++;
-        emit Registered(_msgSender(), typeOfOwner);
-    }
-
-    /**
-     * @notice Approves a pending account for approval.
-     * @param approval Address of the approval that is going to be approved
-     *
-     * Emits a {Approved} event.
-     */
-    function approve(address approval) public onlyAdmin notApproved(approval) {
-        require(approval != address(0), "BlockToWin: ZERO_ADDRESS");
-
-        for (uint256 i; i < approvalsCount; i++) {
-            if (approvals[i].user == approval) {
-                approvals[i].approved = true;
-                isApprovals[approvals[i].user] = true;
-                emit Approved(_msgSender(), approval);
-                break;
-            }
-        }
-        require(isApprovals[approval], "BlockToWin: APPROVAL_ERROR");
-    }
-
-    /**
-     * @notice Rejects a pending account for approval.
-     * @param approval Address of the approval that is going to be rejected.
-     *
-     * Emits a {Rejected} event.
-     */
-    function reject(address approval) public onlyAdmin notApproved(approval) {
-        require(approval != address(0), "BlockToWin: ZERO_ADDRESS");
-
-        bool success;
-        for (uint256 i; i < approvalsCount; i++) {
-            if (approvals[i].user == approval) {
-                delete approvals[i];
-                delete isApprovals[approvals[i].user];
-                success = true;
-                emit Rejected(_msgSender(), approval);
-                break;
-            }
-        }
-        require(success, "BlockToWin: APPROVAL_NOT_EXISTS");
-    }
-
-    /**
-     * @notice Allows to an approval submits a document.
-     * @param name Name of the company/user.
-     * @param promo Description of the promo.
-     * @param validityStart Timestamp for the validity start, in unix
-     * @param validityEnd Timestampt for the validity end, in unix
-     * @param hash Hash generated by the IPFS
-     * @param uploadedAt Timestamp for the generated document
-     * @param explorerLink Link of the document hash in the explorer
-     * @param ipfsLink Link of the document hash in the IPFS
-     * @param ext Extension of the document (ex: .pdf .doc .txt)
-     *
-     * Emits a {DocumentSubmitted} event.
-     */
-    function submitDocument(
-        string memory name,
-        string memory promo,
-        uint256 validityStart,
-        uint256 validityEnd,
-        string memory hash,
-        uint256 uploadedAt,
-        string memory explorerLink,
-        string memory ipfsLink,
-        string memory ext,
-        bool isVisible
-    ) public onlyApproval {
-        require(!verifyDocument(hash), "BlockToWin: HASH_EXISTS");
-        documents[documentsCount] = Document({
-            owner: _msgSender(),
-            name: name,
-            promo: promo,
-            validityStart: validityStart,
-            validityEnd: validityEnd,
-            hash: hash,
-            uploadedAt: uploadedAt,
-            explorerLink: explorerLink,
-            ipfsLink: ipfsLink,
-            isVisible: isVisible
-        });
-        documentsCount += 1;
-        emit DocumentSubmitted(
-            _msgSender(),
-            name,
-            promo,
-            hash,
-            uploadedAt,
-            ext
-        );
-    }
-
-    /**
-     * @notice Returns true if `account` is an approval
-     */
-    function isApproval(address account) external view returns (bool) {
-        return isApprovals[account];
-    }
-
-    /**
-     * @notice Returns true if `account` is an admin
-     */
-    function isAdmin(address account) external view returns (bool) {
-        return _isAdmin[account];
-    }
-
-    /**
-     * @notice Returns true if `account` is an admin who deploy the contract
-     */
-    function isSuperAdmin(address account) external view returns (bool) {
-        return _isSuperAdmin[account];
-    }
-
-    /**
-     * @notice Change the visibility of a document if you are the owner of that document,
-     * if you aren't the owner, it's just returning false.
-     */
-    function changeDocumentVisibility(uint256 documentIndex) external returns (bool) {
-        require(documents[documentIndex].owner == _msgSender(), "BlockToWin: NOT_OWNER_DOCUMENT");
-        documents[documentIndex].isVisible = !documents[documentIndex].isVisible;
+  function isRepeated(uint256 _number, uint256[] memory _array)
+    public
+    pure
+    returns (bool)
+  {
+    for (uint256 i = 0; i < _array.length; i++) {
+      if (_number == _array[i]) {
         return true;
+      }
     }
+    return false;
+  }
 
-    /**
-     *  @notice Removes a document at `index` in the mapping of documents
-     */
-    function removeDocument(uint256 index) external onlyAdmin returns (bool) {
-        if (documents[index].owner != address(0)) {
-            delete documents[index];
-            return true;
-        }
-        return false;
+  function chooseTheAlternates(
+    uint256 _totalPlayers,
+    uint256 _numberOfAlternates,
+    string memory _ipfsDataBack
+  ) private {
+    uint256 j = 0;
+    uint256 k = _totalPlayers;
+    while (j < _numberOfAlternates) {
+      uint256 randomNumber = (uint256(
+        keccak256(
+          abi.encodePacked(block.timestamp, msg.sender, j, k, _ipfsDataBack)
+        )
+      ) % _totalPlayers) + 1;
+      if (
+        !isRepeated(
+          randomNumber,
+          dataLotteryRecord[currentDataLotteryId].winners
+        ) &&
+        !isRepeated(
+          randomNumber,
+          dataLotteryRecord[currentDataLotteryId].alternates
+        )
+      ) {
+        dataLotteryRecord[currentDataLotteryId].alternates.push(randomNumber);
+        j++;
+      } else {
+        k++;
+      }
     }
-    ///@notice revoke an approval 
-    function revokeApproval(address _approval) external onlyAdmin {
-         require(_approval != address(0), "BlockToWin: ZERO_ADDRESS");
+  }
 
-        bool success;
-        for (uint256 i; i < approvalsCount; i++) {
-            if (approvals[i].user == _approval) {
-                delete approvals[i];
-                delete isApprovals[approvals[i].user];
-                success = true;
-                emit RevokeApproval(_msgSender(), _approval);
-                break;
-            }
-        }
-        require(success, "BlockToWin: APPROVAL_NOT_EXISTS");
-    }
-     ///@notice cancel a document only the approval
-    function cancelDocument(uint256 index)
+  ///@notice turn on the lottery and storage the results
+  ///@notice returns the winners, alternate and hashExcel provide
+  function shakeTheNumbers(
+    string memory _ipfsDataBack,
+    uint256 _totalPlayers,
+    uint256 _numberOfWinners,
+    uint256 _numberOfAlternates,
+    uint256 _idDocument
+  ) public returns (DataLottery memory) {
+    require(
+      _totalPlayers > _numberOfWinners,
+      "Total players should be greater tha winners"
+    );
+    require(
+      _totalPlayers - _numberOfWinners >= _numberOfAlternates,
+      "Total players should be greater tha winners+alternates"
+    );
+    currentDataLotteryId++;
+    dataLotteryRecord[currentDataLotteryId]
+    .dataLotteryId = currentDataLotteryId;
+    chooseTheWinners(_totalPlayers, _numberOfWinners, _ipfsDataBack);
+    chooseTheAlternates(_totalPlayers, _numberOfAlternates, _ipfsDataBack);
+    dataLotteryRecord[currentDataLotteryId].ipfsDataBack = _ipfsDataBack;
+    dataLotteryRecord[currentDataLotteryId].idDocument = _idDocument;
+    allData.push(dataLotteryRecord[currentDataLotteryId]);
+    emit NewSort(
+      _totalPlayers,
+      dataLotteryRecord[currentDataLotteryId].winners,
+      dataLotteryRecord[currentDataLotteryId].alternates,
+      _ipfsDataBack,
+      _idDocument
+    );
+    return dataLotteryRecord[currentDataLotteryId];
+  }
+
+  /**
+   * @notice Change the visibility of a document if you are the owner of that document,
+   * if you aren't the owner, it's just returning false.
+   */
+  function changeDocumentVisibility(uint256 documentIndex)
     external
     returns (bool)
   {
-    require(_isAdmin[msg.sender] || msg.sender == documents[index].owner );
+    require(
+      documents[documentIndex].owner == _msgSender(),
+      "BlockToWin: NOT_OWNER_DOCUMENT"
+    );
+    documents[documentIndex].isVisible = !documents[documentIndex].isVisible;
+    return true;
+  }
+
+  /**
+   *  @notice Removes a document at `index` in the mapping of documents
+   */
+  function removeDocument(uint256 index) external onlyOwner returns (bool) {
+    if (documents[index].owner != address(0)) {
+      delete documents[index];
+      return true;
+    }
+    return false;
+  }
+
+  ///@notice this function register an user to allow them submit documents
+  function registerAnUser(uint256 _amountOfDocuments, address _userAddress)
+    public
+    payable
+    onlyOwner
+    nonReentrant
+  {
+    require(msg.value > 0, "This function is payable");
+    ERC20Upgradeable(this)._mint(_userAddress, _amountOfDocuments);
+    payable(_userAddress).transfer(msg.value);
+  }
+
+  ///@notice cancel a document only the approval
+  function cancelDocument(uint256 index) external returns (bool) {
+    require(msg.sender == documents[index].owner, "You are not the owner");
     if (documents[index].owner != address(0)) {
       if (!documents[index].isVisible) {
         documents[index].isVisible = true;
@@ -366,28 +308,24 @@ contract BlockToWin is Initializable, ContextUpgradeable {
     return false;
   }
 
-    /**
-     * @notice Returns true if `hash` already exist in a document
-     */
-    function verifyDocument(string memory hash) public view returns (bool) {
-        for (uint256 i; i < documentsCount; i++) {
-            if (keccak256(bytes(documents[i].hash)) == keccak256(bytes(hash))) {
-                return true;
-            }
-        }
-        return false;
+  /**
+   * @notice Returns true if `hash` already exist in a document
+   */
+  function verifyDocument(string memory hash) public view returns (bool) {
+    for (uint256 i; i < documentsCount; i++) {
+      if (keccak256(bytes(documents[i].hash)) == keccak256(bytes(hash))) {
+        return true;
+      }
     }
+    return false;
+  }
 
-    /**
-     * @notice Returns true if `user` is pending for approval
-     * @param user The address to be checked if it is pending
-     */
-    function isPending(address user) public view returns (bool) {
-        for (uint256 i; i < approvalsCount; i++) {
-            if (approvals[i].user == user && !approvals[i].approved) {
-                return true;
-            }
-        }
-        return false;
-    }
+  ////VIEW DOCUMENTS
+  function seeCurrentData() public view returns (DataLottery memory) {
+    return dataLotteryRecord[currentDataLotteryId];
+  }
+
+  function seeDataUnique(uint256 _id) public view returns (DataLottery memory) {
+    return dataLotteryRecord[_id];
+  }
 }

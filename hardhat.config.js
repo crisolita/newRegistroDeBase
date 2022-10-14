@@ -25,20 +25,21 @@ module.exports = {
       url: "https://data-seed-prebsc-1-s1.binance.org:8545",
       chainId: 97,
       gasLimit: 200000000,
-      accounts: [process.env.MNEMONIC],
+      accounts: [process.env.TESNETPRIVKEY],
     },
     mainnet: {
       url: "https://bsc-dataseed.binance.org/",
       chainId: 56,
       gasLimit: 20000000,
-      accounts: [process.env.MNEMONIC],
+      accounts: [process.env.MAINNETPRIVKEY],
     },
   },
   namedAccounts: {
     deployer: 0,
     feeRecipient: 1,
     user: 2,
-  },  etherscan: {
+  },
+  etherscan: {
     apiKey: process.env.SCAN_API,
   },
   gasReporter: {
