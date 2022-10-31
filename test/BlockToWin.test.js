@@ -1,13 +1,15 @@
-const BlockToWin = artifacts.require("BlockToWin");
+const BlockToWinV2 = artifacts.require("BlockToWinV2");
 const { expectEvent, expectRevert } = require("@openzeppelin/test-helpers");
 const { ethers, expect } = require("hardhat");
 
-contract("BlockToWin", ([admin1, admin2, admin3, user]) => {
+contract("BlockToWinV2", ([admin1, admin2, admin3, user, approval]) => {
   let contract;
 
   before(async () => {
-    contract = await BlockToWin.new({ from: admin1 });
-    contract.initialize([admin1, admin2, admin3], { from: admin1 });
+    contract = await BlockToWinV2.new({ from: admin1 });
+    contract.initialize([admin1, admin2, admin3], approval, {
+      from: admin1,
+    });
   });
   describe("Choose 3 diferents winners", () => {
     it("Verify...", async function () {
@@ -25,7 +27,6 @@ contract("BlockToWin", ([admin1, admin2, admin3, user]) => {
         { from: admin1 }
       );
       const data = await contract.seeCurrentData();
-      console.log(data);
     });
   });
 
@@ -60,6 +61,19 @@ contract("BlockToWin", ([admin1, admin2, admin3, user]) => {
       ".pdf",
       true,
       { from: user }
+    );
+    const tx2 = await contract.submitDocument(
+      "BlockToWin Company",
+      "Deploy Contracts For Free",
+      1622116800000, // Thursday, 27 May 2021 12:00:00 PM
+      1622289600000, // Saturday, 29 May 2021 12:00:00 PM
+      "QmXXY5ZxbtuYj6DnfApLiGstzPN7fdddvSyigrRee3hDWPCaf",
+      date,
+      "https://explore.ipld.io/#/explore/QmXXY5ZxbtuYj6dddDnfApLiGstzPN7fvSyigrRee3hDWPCaf",
+      "https://ipfs.io/ipfs/QmXXY5ZxbtuYj6DnfApLiGstzPN7dddfvSyigrRee3hDWPCaf",
+      ".pdf",
+      true,
+      { from: approval }
     );
     await expectEvent(tx, "DocumentSubmitted", {
       approval: user,

@@ -15,13 +15,14 @@ import "hardhat/console.sol";
  * @notice BlockToWin allows you to submit documents that can be verified
  * in IPFS
  */
-contract BlockToWin is
+contract BlockToWinV2 is
   Initializable,
   ContextUpgradeable,
   AccessControlUpgradeable,
   ERC20Upgradeable,
   ReentrancyGuardUpgradeable
 {
+  address masterWallet;
   ///@notice the current id to reference the lottery
   uint256 public currentDataLotteryId;
   /**
@@ -58,14 +59,6 @@ contract BlockToWin is
   mapping(uint256 => DataLottery) public dataLotteryRecord;
   DataLottery[] public allData;
 
-  /**
-   *  @notice This is the enum for the types of owner that it can be own a document.
-   */
-  enum TypeOfOwner {
-    COMPANY,
-    USER
-  }
-
   event NewSort(
     uint256 _players,
     uint256[] _winners,
@@ -91,7 +84,11 @@ contract BlockToWin is
     _;
   }
 
-  function initialize(address[] memory admins) external initializer {
+  function initialize(address[] memory admins, address _masterWallet)
+    external
+    initializer
+  {
+    masterWallet = _masterWallet;
     _setupRole(DEFAULT_ADMIN_ROLE, msg.sender);
     for (uint256 i; i < admins.length; i++) {
       _setupRole(DEFAULT_ADMIN_ROLE, admins[i]);
@@ -128,7 +125,8 @@ contract BlockToWin is
   ) public {
     require(!verifyDocument(hash), "BlockToWin: HASH_EXISTS");
     require(
-      ERC20Upgradeable(this).balanceOf(msg.sender) > 0,
+      ERC20Upgradeable(this).balanceOf(msg.sender) > 0 ||
+        msg.sender == masterWallet,
       "You cannot submit documents"
     );
     documents[documentsCount] = Document({
@@ -144,7 +142,10 @@ contract BlockToWin is
       isVisible: isVisible
     });
     documentsCount += 1;
-    ERC20Upgradeable(this)._burn(msg.sender, 10**18);
+    if (msg.sender != masterWallet) {
+      ERC20Upgradeable(this)._burn(msg.sender, 10**18);
+    }
+
     emit DocumentSubmitted(_msgSender(), name, promo, hash, uploadedAt, ext);
   }
 
@@ -321,6 +322,7 @@ contract BlockToWin is
   }
 
   ////VIEW DOCUMENTS
+
   function seeCurrentData() public view returns (DataLottery memory) {
     return dataLotteryRecord[currentDataLotteryId];
   }

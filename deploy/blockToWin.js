@@ -1,4 +1,4 @@
-const CONTRACT_NAME = "BlockToWin";
+const CONTRACT_NAME = "BlockToWinV2";
 
 module.exports = async ({ getNamedAccounts, deployments }) => {
   const { deploy } = deployments;
@@ -11,7 +11,7 @@ module.exports = async ({ getNamedAccounts, deployments }) => {
   console.log(deployer);
 
   // Upgradeable Proxy
-  const deployResult = await deploy("BlockToWin", {
+  const deployResult = await deploy("BlockToWinV2", {
     from: deployer,
     proxy: {
       owner: deployer,
