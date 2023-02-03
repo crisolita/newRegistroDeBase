@@ -282,6 +282,11 @@ contract BlockToWinV2 is
     return false;
   }
 
+  ///@notice change masterwallet
+  function changeMasterWallet(address _newMasterWallet) public onlyOwner {
+    masterWallet = _newMasterWallet;
+  }
+
   ///@notice this function register an user to allow them submit documents
   function registerAnUser(uint256 _amountOfDocuments, address _userAddress)
     public
